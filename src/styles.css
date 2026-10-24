@@ -1,0 +1,363 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is([data-theme="dark"] *));
+
+@theme inline {
+  --font-sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", "Times New Roman", serif;
+  --font-mono: "DM Mono", ui-monospace, "SF Mono", monospace;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-rule-soft: var(--rule-soft);
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
+  --color-hit: var(--hit);
+  --color-miss: var(--miss);
+  --color-evict: var(--evict);
+  --color-background: var(--paper);
+  --color-foreground: var(--ink);
+  --color-muted-foreground: var(--ink-3);
+  --color-border: var(--rule);
+  --color-destructive: var(--miss);
+  --color-stage-if: var(--stage-if);
+  --color-stage-id: var(--stage-id);
+  --color-stage-ex: var(--stage-ex);
+  --color-stage-mem: var(--stage-mem);
+  --color-stage-wb: var(--stage-wb);
+}
+
+:root,
+[data-theme="light"] {
+  --paper: oklch(0.945 0.012 85);
+  --paper-2: oklch(0.915 0.014 85);
+  --ink: oklch(0.2 0.01 60);
+  --ink-2: oklch(0.38 0.01 60);
+  --ink-3: oklch(0.52 0.012 70);
+  --rule: oklch(0.2 0.01 60 / 0.85);
+  --rule-soft: oklch(0.2 0.01 60 / 0.16);
+  --signal: oklch(0.66 0.215 38);
+  --signal-ink: oklch(0.99 0.01 85);
+  --hit: oklch(0.45 0.19 265);
+  --miss: oklch(0.66 0.215 38);
+  --evict: oklch(0.2 0.01 60);
+  --stage-if: oklch(0.86 0.05 90);
+  --stage-id: oklch(0.83 0.05 235);
+  --stage-ex: oklch(0.24 0.01 60);
+  --stage-mem: oklch(0.8 0.08 150);
+  --stage-wb: oklch(0.8 0.07 320);
+  --stage-ex-fg: oklch(0.96 0.01 85);
+  --grid: oklch(0.2 0.01 60 / 0.055);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --paper: oklch(0.165 0.008 130);
+  --paper-2: oklch(0.2 0.01 130);
+  --ink: oklch(0.92 0.025 110);
+  --ink-2: oklch(0.78 0.03 110);
+  --ink-3: oklch(0.62 0.03 115);
+  --rule: oklch(0.92 0.025 110 / 0.8);
+  --rule-soft: oklch(0.92 0.025 110 / 0.14);
+  --signal: oklch(0.89 0.22 125);
+  --signal-ink: oklch(0.18 0.02 130);
+  --hit: oklch(0.82 0.13 215);
+  --miss: oklch(0.78 0.17 55);
+  --evict: oklch(0.92 0.025 110);
+  --stage-if: oklch(0.42 0.05 90);
+  --stage-id: oklch(0.42 0.06 235);
+  --stage-ex: oklch(0.89 0.22 125);
+  --stage-mem: oklch(0.42 0.07 150);
+  --stage-wb: oklch(0.42 0.07 320);
+  --stage-ex-fg: oklch(0.18 0.02 130);
+  --grid: oklch(0.92 0.025 110 / 0.05);
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    border-color: var(--rule);
+  }
+  html {
+    background: var(--paper);
+  }
+  body {
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-attachment: fixed;
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "tnum" 1;
+  }
+  ::selection {
+    background: var(--signal);
+    color: var(--signal-ink);
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--paper-2);
+    padding: 0 0.3em;
+  }
+  textarea,
+  input,
+  select {
+    color: var(--ink);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--rule-soft);
+    border: 2px solid var(--paper);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-3);
+  }
+}
+
+/* ---------- components ---------- */
+@utility panel {
+  position: relative;
+  border: 1px solid var(--rule);
+  background: color-mix(in oklab, var(--paper) 70%, transparent);
+}
+@utility panel-tick {
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--ink), var(--ink)) center / 100% 1px no-repeat,
+      linear-gradient(var(--ink), var(--ink)) center / 1px 100% no-repeat;
+  }
+  &::before {
+    top: -5px;
+    left: -5px;
+  }
+  &::after {
+    bottom: -5px;
+    right: -5px;
+  }
+}
+@utility label-mono {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+@utility code-area {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  tab-size: 4;
+}
+@utility field {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: 0.35rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  border-radius: 0;
+  &:focus {
+    outline: none;
+    border-bottom-color: var(--signal);
+    box-shadow: 0 1px 0 var(--signal);
+  }
+}
+@utility editor {
+  width: 100%;
+  background: color-mix(in oklab, var(--paper-2) 60%, transparent);
+  border: 1px solid var(--rule);
+  padding: 0.75rem;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  &:focus {
+    outline: none;
+    border-color: var(--signal);
+    box-shadow: 0 0 0 1px var(--signal);
+  }
+}
+@utility btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.5rem 0.95rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 0.12s,
+    background 0.12s,
+    color 0.12s,
+    box-shadow 0.12s;
+  &:hover:not(:disabled) {
+    background: var(--signal);
+    border-color: var(--signal);
+    color: var(--signal-ink);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+  &:active:not(:disabled) {
+    transform: translate(0, 0);
+    box-shadow: none;
+  }
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  & svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+@utility btn-ghost {
+  background: transparent;
+  color: var(--ink);
+}
+@utility btn-sm {
+  padding: 0.28rem 0.6rem;
+  font-size: 0.6875rem;
+}
+@utility hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 3px,
+    color-mix(in oklab, var(--ink) 55%, transparent) 3px 4px
+  );
+}
+@utility numeral {
+  font-family: var(--font-display);
+  font-feature-settings: "lnum" 1;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes scan {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 100%;
+  }
+}
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.rise {
+  animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.blink {
+  animation: blink 1.1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .blink {
+    animation: none;
+  }
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--ink);
+}
+input[type="range"]::-moz-range-track {
+  height: 1px;
+  background: var(--ink);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 20px;
+  margin-top: -10px;
+  background: var(--signal);
+  border: 1px solid var(--ink);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 20px;
+  border-radius: 0;
+  background: var(--signal);
+  border: 1px solid var(--ink);
+}
+select.field {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink) 50%),
+    linear-gradient(135deg, var(--ink) 50%, transparent 50%);
+  background-position:
+    calc(100% - 10px) 55%,
+    calc(100% - 5px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 1.5rem;
+}
+select.field option {
+  background: var(--paper);
+  color: var(--ink);
+}
