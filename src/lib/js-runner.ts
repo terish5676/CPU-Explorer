@@ -11,12 +11,26 @@ export interface JsRunResult {
 
 const WORKER_SRC = `
 self.onmessage = (e) => {
+  const payload = typeof e.data === 'object' && e.data !== null ? e.data : { code: String(e.data), stdin: '' };
+  const code = payload.code || '';
+  const stdin = payload.stdin || '';
   const logs = [];
   const fmt = (a) => typeof a === 'string' ? a : (typeof a === 'bigint' ? a.toString() : (() => { try { return JSON.stringify(a) } catch { return String(a) } })());
   const console = { log: (...a) => logs.push(a.map(fmt).join(' ')), error: (...a) => logs.push(a.map(fmt).join(' ')), warn: (...a) => logs.push(a.map(fmt).join(' ')) };
+
+  // Standard input support: mock prompt, readline and input from stdin
+  const inputLines = String(stdin).split('\\n');
+  let inputIdx = 0;
+  const prompt = (msg) => {
+    if (msg) logs.push(String(msg));
+    return inputLines[inputIdx++] ?? '';
+  };
+  const readline = () => inputLines[inputIdx++] ?? '';
+  const input = (msg) => prompt(msg);
+
   const t0 = performance.now();
   try {
-    new Function('console', e.data)(console);
+    new Function('console', 'prompt', 'readline', 'input', code)(console, prompt, readline, input);
     self.postMessage({ ok: true, out: logs.join('\\n') + (logs.length ? '\\n' : ''), err: '', ms: performance.now() - t0 });
   } catch (err) {
     self.postMessage({ ok: false, out: logs.join('\\n'), err: String(err && err.stack || err), ms: performance.now() - t0 });
@@ -27,6 +41,7 @@ export function runJavaScript(
   code: string,
   timeoutMs = 5000,
   signal?: AbortSignal,
+  stdin = "",
 ): Promise<JsRunResult> {
   return new Promise((resolve) => {
     if (signal?.aborted) {
@@ -99,6 +114,7 @@ export function runJavaScript(
         timedOut: false,
         cancelled: false,
       });
-    worker.postMessage(code);
+
+    worker.postMessage({ code, stdin });
   });
 }

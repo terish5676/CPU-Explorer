@@ -55,7 +55,7 @@ export const browserJsAdapter: ExecutionAdapter = {
         adapterRoundTripMs: performance.now() - t0,
       };
     }
-    const r = await runJavaScript(req.source, 5000, req.signal);
+    const r = await runJavaScript(req.source, 5000, req.signal, req.stdin);
     return {
       status: r.ok ? "success" : "error",
       stdout: r.stdout,

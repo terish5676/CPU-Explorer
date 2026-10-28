@@ -1,7 +1,18 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ArrowRight, Copy, Database, FileCode, Loader2, Play, ScanSearch, Save, Square } from "lucide-react";
+import {
+  ArrowRight,
+  Copy,
+  Database,
+  FileCode,
+  Loader2,
+  Play,
+  ScanSearch,
+  Save,
+  Square,
+  Terminal,
+} from "lucide-react";
 import { EXAMPLES, LANGUAGES, examplesFor, type Language } from "@/lib/examples";
 import {
   adapterFor,
@@ -9,6 +20,7 @@ import {
   validateSource,
   type ExecutionResponse,
 } from "@/lib/execution-adapter";
+import { detectCodeInputs } from "@/lib/input-detector";
 import { runsStore } from "@/lib/runs-store";
 import { sendHandoff } from "@/lib/handoff";
 import { DataBadge, Empty, PageHeader, Segmented, Sheet } from "@/components/page-header";
@@ -21,26 +33,42 @@ export const Route = createFileRoute("/code-lab")({
       {
         name: "description",
         content:
-          "Run C, C++, Python, Java and JavaScript for real — edit freely, measure wall time, save runs.",
+          "Run C, C++, Python, Java and JavaScript for real — in-terminal interactive execution with in-order input.",
       },
     ],
   }),
   component: CodeLab,
 });
 
+interface TerminalEntry {
+  id: string;
+  type: "command" | "stdout" | "input" | "stderr" | "system";
+  text: string;
+}
+
 function CodeLab() {
   const navigate = useNavigate();
   const [lang, setLang] = useState<Language>("javascript");
   const [exId, setExId] = useState(examplesFor("javascript")[0]!.id);
   const [source, setSource] = useState(examplesFor("javascript")[0]!.source);
-  const [stdin, setStdin] = useState("");
+
+  // Live in-terminal execution state (inbuild only, in order, no separate input)
+  const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
+  const [waitingForInput, setWaitingForInput] = useState(false);
+  const [currentPrompt, setCurrentPrompt] = useState("");
+  const [activeInput, setActiveInput] = useState("");
+  const [collectedInputs, setCollectedInputs] = useState<string[]>([]);
+
   const [busy, setBusy] = useState(false);
   const [resp, setResp] = useState<ExecutionResponse | null>(null);
   const [showAnalysis, setShowAnalysis] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+  const terminalInputRef = useRef<HTMLInputElement>(null);
+  const terminalScrollRef = useRef<HTMLDivElement>(null);
 
   const adapter = adapterFor(lang);
   const analysis = useMemo(() => analyzeSource(source), [source]);
+  const inputDetection = useMemo(() => detectCodeInputs(lang, source), [lang, source]);
   const list = examplesFor(lang);
   const dirty = useMemo(() => {
     const ex = EXAMPLES.find((e) => e.id === exId);
@@ -49,53 +77,190 @@ function CodeLab() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // Auto-scroll terminal when new lines appear
+  useEffect(() => {
+    if (terminalScrollRef.current) {
+      terminalScrollRef.current.scrollTop = terminalScrollRef.current.scrollHeight;
+    }
+  }, [terminalEntries, currentPrompt, waitingForInput]);
+
   const pickLang = (l: Language) => {
     setLang(l);
     const e = examplesFor(l)[0]!;
     setExId(e.id);
     setSource(e.source);
+    resetTerminal();
     setResp(null);
   };
+
   const pickEx = (id: string) => {
     const e = EXAMPLES.find((x) => x.id === id)!;
     setExId(id);
     setSource(e.source);
+    resetTerminal();
     setResp(null);
+  };
+
+  const resetTerminal = () => {
+    abortRef.current?.abort();
+    setTerminalEntries([]);
+    setWaitingForInput(false);
+    setCurrentPrompt("");
+    setActiveInput("");
+    setCollectedInputs([]);
+    setBusy(false);
   };
 
   const cancel = () => {
     abortRef.current?.abort();
     abortRef.current = null;
     setBusy(false);
+    setWaitingForInput(false);
+    setTerminalEntries((prev) => [
+      ...prev,
+      { id: `cancel-${Date.now()}`, type: "system", text: "[Execution stopped by user]" },
+    ]);
     toast.message("Run cancelled");
   };
 
-  const run = async () => {
+  /**
+   * Run the compiled code on the execution engine with all inputs collected.
+   */
+  const executeWithInputs = async (inputs: string[], promptsToClean: string[]) => {
     const errs = validateSource({ language: lang, source });
     if (errs.length) {
       toast.error(errs[0]!);
+      setBusy(false);
       return;
     }
+
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
     setBusy(true);
-    setResp(null);
+
+    const stdinString = inputs.join("\n") + "\n";
+
     try {
-      const r = await adapter.run({ language: lang, source, stdin, signal: ac.signal });
+      const r = await adapter.run({
+        language: lang,
+        source,
+        stdin: stdinString,
+        signal: ac.signal,
+      });
       if (ac.signal.aborted) return;
       setResp(r);
+
+      let stdoutText = r.stdout || "";
+      const stderrText = r.stderr || "";
+
+      // Clean out prompts that were already printed interactively in the terminal
+      promptsToClean.forEach((p) => {
+        if (p && p !== "> " && stdoutText.includes(p)) {
+          stdoutText = stdoutText.replace(p, "");
+        }
+      });
+
+      const entriesToAdd: TerminalEntry[] = [];
+      if (stdoutText.trim()) {
+        entriesToAdd.push({ id: `out-${Date.now()}`, type: "stdout", text: stdoutText.trimStart() });
+      }
+      if (stderrText.trim()) {
+        entriesToAdd.push({ id: `err-${Date.now()}`, type: "stderr", text: stderrText });
+      }
+
+      const statusNote = `[Process exited with code ${r.exitCode ?? 0} in ${r.measured?.wallTimeMs.toFixed(1)} ms]`;
+      entriesToAdd.push({ id: `sys-${Date.now()}`, type: "system", text: statusNote });
+
+      setTerminalEntries((prev) => [...prev, ...entriesToAdd]);
+
       if (r.status === "success") {
-        toast.success("Execution complete", { description: `${r.runtime} · ${r.measured?.wallTimeMs.toFixed(1)} ms` });
+        toast.success("Execution complete", {
+          description: `${r.runtime} · ${r.measured?.wallTimeMs.toFixed(1)} ms`,
+        });
       } else {
-        toast.error("Execution error", { description: r.stderr.slice(0, 120) || r.status });
+        toast.error("Execution error", { description: stderrText.slice(0, 100) || r.status });
       }
     } catch (e) {
       if (ac.signal.aborted) return;
       toast.error(e instanceof Error ? e.message : "Runner error");
+      setTerminalEntries((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          type: "stderr",
+          text: e instanceof Error ? e.message : "Execution failed.",
+        },
+      ]);
     } finally {
       if (abortRef.current === ac) abortRef.current = null;
       setBusy(false);
+    }
+  };
+
+  /**
+   * Start a fresh execution run.
+   * If code expects input, prompt for inputs interactively inside the terminal in order.
+   */
+  const startRun = () => {
+    resetTerminal();
+
+    const runnerLabel = adapter.name;
+    const initialCommand = `$ run (${runnerLabel})`;
+    setTerminalEntries([
+      { id: `cmd-${Date.now()}`, type: "command", text: initialCommand },
+    ]);
+
+    const steps = inputDetection.steps;
+    if (steps.length > 0) {
+      // Code expects input: initiate first in-order inbuild prompt
+      setWaitingForInput(true);
+      setCurrentPrompt(steps[0].prompt);
+      setActiveInput("");
+      setTimeout(() => terminalInputRef.current?.focus(), 50);
+    } else {
+      // No input expected: run directly
+      executeWithInputs([], []);
+    }
+  };
+
+  /**
+   * User pressed Enter on the active in-terminal line
+   */
+  const handleInputSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!waitingForInput) return;
+
+    const typedVal = activeInput;
+    // Echo the prompt + user's input directly into the terminal log
+    setTerminalEntries((prev) => [
+      ...prev,
+      { id: `in-${Date.now()}`, type: "input", text: `${currentPrompt}${typedVal}` },
+    ]);
+
+    // Check if the user entered space-separated values that cover multiple steps
+    const tokens = typedVal.trim().split(/\s+/).filter(Boolean);
+    const newCollected = [...collectedInputs, typedVal];
+    setCollectedInputs(newCollected);
+
+    const totalSteps = inputDetection.steps.length;
+    // If user provided multiple values on one line (e.g. "15 25"), that satisfies all steps
+    const currentCount = newCollected.length;
+    const valuesCount = newCollected.flatMap((s) => s.trim().split(/\s+/)).filter(Boolean).length;
+
+    if (currentCount >= totalSteps || valuesCount >= totalSteps) {
+      // All inputs provided: execute now!
+      setWaitingForInput(false);
+      setCurrentPrompt("");
+      setActiveInput("");
+      const allPrompts = inputDetection.steps.map((s) => s.prompt);
+      executeWithInputs(newCollected, allPrompts);
+    } else {
+      // Prompt for the next input step in order
+      const nextStep = inputDetection.steps[currentCount];
+      setCurrentPrompt(nextStep?.prompt || "> ");
+      setActiveInput("");
+      setTimeout(() => terminalInputRef.current?.focus(), 50);
     }
   };
 
@@ -108,7 +273,7 @@ function CodeLab() {
       name: `Code · ${LANGUAGES.find((l) => l.id === lang)!.label} · ${title}`,
       kind: "code",
       source: resp.source,
-      inputs: { language: lang, source, stdin },
+      inputs: { language: lang, source, stdin: collectedInputs.join("\n") },
       metrics: {
         executionTimeMs: resp.measured.wallTimeMs,
         ...(resp.measured.cpuTimeMs ? { cpuTimeMs: resp.measured.cpuTimeMs } : {}),
@@ -123,11 +288,11 @@ function CodeLab() {
   };
 
   const copyOutput = async () => {
-    if (!resp) return;
-    const text = [resp.stdout, resp.stderr].filter(Boolean).join("\n--- stderr ---\n");
+    const text = terminalEntries.map((e) => e.text).join("\n");
+    if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      toast.success("Output copied to clipboard");
+      toast.success("Terminal output copied");
     } catch {
       toast.error("Clipboard unavailable");
     }
@@ -136,7 +301,9 @@ function CodeLab() {
   const toAssembly = () => {
     const curEx = EXAMPLES.find((e) => e.id === exId);
     const title = dirty ? "Custom program" : (curEx?.title ?? "Code snippet");
-    const asm = curEx?.asm || `# Disassembly representation for ${title} (${lang})
+    const asm =
+      curEx?.asm ||
+      `# Disassembly representation for ${title} (${lang})
 main:
     push    rbp
     mov     rbp, rsp
@@ -155,7 +322,11 @@ main:
     mov     eax, DWORD PTR [rbp-8]
     leave
     ret`;
-    sendHandoff({ kind: "asm", text: asm, label: `${LANGUAGES.find((l) => l.id === lang)?.label} · ${title}` });
+    sendHandoff({
+      kind: "asm",
+      text: asm,
+      label: `${LANGUAGES.find((l) => l.id === lang)?.label} · ${title}`,
+    });
     navigate({ to: "/assembly" });
   };
 
@@ -184,13 +355,14 @@ main:
         index="01"
         title="Code"
         italic="lab"
-        description="Write and execute real code with live hardware telemetry. JavaScript runs in an isolated local Web Worker; C, C++, Python and Java compile and run on Judge0 CE with genuine wall time and memory measurements."
+        description="Write and execute real code with live hardware telemetry. Interactive in-terminal execution — input is typed directly into the terminal in order, exactly like a regular compiler."
       >
         <DataBadge source="Measured" />
       </PageHeader>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_24rem]">
         <div className="flex min-w-0 flex-col gap-6">
+          {/* ── Sheet A: Source Editor ───────────────────────────────────── */}
           <Sheet
             title="Source"
             tag="A"
@@ -202,6 +374,7 @@ main:
               />
             }
           >
+            {/* Template Selector */}
             <div className="mb-3 flex flex-wrap gap-1.5">
               {list.map((e) => (
                 <button
@@ -215,38 +388,33 @@ main:
               ))}
             </div>
 
+            {/* Code Editor */}
             <textarea
               className="editor h-80"
               value={source}
               onChange={(e) => setSource(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  startRun();
+                }
+              }}
               spellCheck={false}
               aria-label="Source code"
             />
 
-            {lang !== "javascript" && (
-              <label className="mt-3 block">
-                <span className="label-mono">Standard input (stdin)</span>
-                <textarea
-                  className="editor mt-1 h-16"
-                  value={stdin}
-                  onChange={(e) => setStdin(e.target.value)}
-                  placeholder="Optional input passed to the running program on stdin"
-                  spellCheck={false}
-                  aria-label="Standard input"
-                />
-              </label>
-            )}
-
+            {/* Action Bar */}
             <div className="mt-4 flex flex-wrap items-center gap-2">
               {busy ? (
                 <button className="btn" onClick={cancel} type="button">
                   <Square className="h-4 w-4" /> Stop
                 </button>
               ) : (
-                <button className="btn" onClick={run} type="button">
+                <button className="btn" onClick={startRun} type="button">
                   <Play className="h-4 w-4" /> Run
                 </button>
               )}
+
               <button
                 className="btn btn-ghost"
                 type="button"
@@ -258,7 +426,7 @@ main:
                 className="btn btn-ghost"
                 type="button"
                 onClick={copyOutput}
-                disabled={!resp}
+                disabled={!terminalEntries.length}
               >
                 <Copy className="h-4 w-4" /> Copy out
               </button>
@@ -298,47 +466,123 @@ main:
             </p>
           </Sheet>
 
+          {/* ── Sheet B: Terminal (Regular compiler CLI with in-order input) ─ */}
           <Sheet
-            title="Output"
+            title="Terminal"
             tag="B"
-            bodyClassName="font-mono text-sm"
+            bodyClassName="p-0 overflow-hidden"
             actions={
-              resp ? (
-                <span className="label-mono">
-                  {resp.status} · exit {resp.exitCode ?? "—"}
-                </span>
-              ) : undefined
+              <div className="flex items-center gap-2">
+                {resp && (
+                  <span className="label-mono">
+                    {resp.status} · exit {resp.exitCode ?? 0}
+                  </span>
+                )}
+                {terminalEntries.length > 0 && (
+                  <button
+                    onClick={resetTerminal}
+                    className="font-mono text-[11px] text-ink-3 hover:text-ink px-1.5 py-0.5"
+                    title="Clear terminal window"
+                  >
+                    clear
+                  </button>
+                )}
+              </div>
             }
           >
-            {!resp ? (
-              <Empty>
-                Press <b>Run</b> to execute. Edit freely — every language runs for real on genuine execution hardware.
-              </Empty>
-            ) : (
-              <div>
-                {resp.runtime && (
-                  <p className="label-mono mb-2 text-ink-3">runtime · {resp.runtime}</p>
-                )}
-                {resp.stdout ? (
-                  <pre className="mt-2 whitespace-pre-wrap border border-rule bg-paper-2/60 p-3">
-                    {resp.stdout}
-                  </pre>
-                ) : (
-                  <p className="mt-2 text-ink-3">(no stdout produced)</p>
-                )}
-                {resp.stderr && (
-                  <pre className="mt-2 whitespace-pre-wrap border border-dashed border-miss p-3 text-miss">
-                    {resp.stderr}
-                  </pre>
-                )}
-                <p className="mt-2 text-[11px] text-ink-3">
-                  Adapter round-trip: {resp.adapterRoundTripMs.toFixed(0)} ms (includes compilation & network transit; program execution time is in Metrics)
-                </p>
+            {/* Terminal Window */}
+            <div
+              ref={terminalScrollRef}
+              onClick={() => {
+                if (waitingForInput) terminalInputRef.current?.focus();
+              }}
+              className="flex min-h-[220px] max-h-[460px] flex-col overflow-y-auto bg-[#0b0c10] p-4 font-mono text-xs leading-relaxed text-[#e0e2ec] cursor-text select-text"
+            >
+              {terminalEntries.length === 0 && !busy && !waitingForInput ? (
+                <div className="py-12 text-center text-ink-3">
+                  Click <b className="text-signal">Run</b> to execute. When your code asks for input (e.g. <span className="text-[#e0e2ec]">cin &gt;&gt;</span> or <span className="text-[#e0e2ec]">input()</span>), you type it directly inside this terminal in order.
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {terminalEntries.map((entry) => {
+                    if (entry.type === "command") {
+                      return (
+                        <div key={entry.id} className="text-ink-3 pb-1 border-b border-rule/30">
+                          {entry.text}
+                        </div>
+                      );
+                    }
+                    if (entry.type === "input") {
+                      return (
+                        <div key={entry.id} className="text-[#38bdf8] font-bold">
+                          {entry.text}
+                        </div>
+                      );
+                    }
+                    if (entry.type === "stdout") {
+                      return (
+                        <div key={entry.id} className="whitespace-pre-wrap text-[#34d399]">
+                          {entry.text}
+                        </div>
+                      );
+                    }
+                    if (entry.type === "stderr") {
+                      return (
+                        <div key={entry.id} className="whitespace-pre-wrap text-[#f87171]">
+                          {entry.text}
+                        </div>
+                      );
+                    }
+                    if (entry.type === "system") {
+                      return (
+                        <div key={entry.id} className="text-ink-3 pt-2 text-[11px]">
+                          {entry.text}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })}
+
+                  {/* Active In-Terminal Input Prompt (inbuild only, in order) */}
+                  {waitingForInput && (
+                    <form
+                      onSubmit={handleInputSubmit}
+                      className="flex items-center text-[#38bdf8] font-bold"
+                    >
+                      <span className="whitespace-pre">{currentPrompt}</span>
+                      <input
+                        ref={terminalInputRef}
+                        type="text"
+                        value={activeInput}
+                        onChange={(e) => setActiveInput(e.target.value)}
+                        autoFocus
+                        spellCheck={false}
+                        className="ml-0.5 flex-1 bg-transparent font-mono text-xs text-white outline-none caret-signal"
+                      />
+                      <span className="animate-pulse text-signal">█</span>
+                    </form>
+                  )}
+
+                  {busy && (
+                    <div className="flex items-center gap-2 pt-1 text-signal">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>running...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Terminal Status Footer */}
+            {resp && (
+              <div className="border-t border-rule/30 bg-[#07080a] px-3 py-1 font-mono text-[10px] text-ink-3">
+                Round-trip: {resp.adapterRoundTripMs.toFixed(0)} ms · Hardware telemetry measured
               </div>
             )}
           </Sheet>
         </div>
 
+        {/* ── Right Column: Telemetry & Static Analysis ───────────────────── */}
         <div className="flex flex-col gap-6">
           <Sheet title="Metrics" tag="C">
             {!resp || resp.status !== "success" || !resp.measured ? (
